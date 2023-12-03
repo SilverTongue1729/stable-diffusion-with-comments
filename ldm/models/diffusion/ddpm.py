@@ -328,9 +328,9 @@ class DDPM(pl.LightningModule):
 
     def get_input(self, batch, k):
         x = batch[k]
-        if len(x.shape) == 3:
+        if len(x.shape) == 3:  # add batch dimension
             x = x[..., None]
-        x = rearrange(x, 'b h w c -> b c h w')
+        x = rearrange(x, 'b h w c -> b c h w')  # [1,256,256,3] -> [1,3,256,256]
         x = x.to(memory_format=torch.contiguous_format).float()
         return x
 
@@ -339,7 +339,7 @@ class DDPM(pl.LightningModule):
         loss, loss_dict = self(x)
         return loss, loss_dict
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx):  # [1,256,256,3] image
         loss, loss_dict = self.shared_step(batch)
 
         self.log_dict(loss_dict, prog_bar=True,
@@ -457,8 +457,8 @@ class LatentDiffusion(DDPM):
             self.scale_factor = scale_factor
         else:
             self.register_buffer('scale_factor', torch.tensor(scale_factor))
-        self.instantiate_first_stage(first_stage_config)
-        self.instantiate_cond_stage(cond_stage_config)
+        self.instantiate_first_stage(first_stage_config)  # Autoencoder
+        self.instantiate_cond_stage(cond_stage_config)  # Embedder for conditioning information (ex: ClassEmbedder for class labels, in modules.py)
         self.cond_stage_forward = cond_stage_forward
         self.clip_denoised = False
         self.bbox_tokenizer = None  
@@ -653,12 +653,12 @@ class LatentDiffusion(DDPM):
     @torch.no_grad()
     def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
                   cond_key=None, return_original_cond=False, bs=None):
-        x = super().get_input(batch, k)
+        x = super().get_input(batch, k)  # gets image, of shape (bs, c, h, w) which is (bs, 3, 256, 256)
         if bs is not None:
             x = x[:bs]
         x = x.to(self.device)
-        encoder_posterior = self.encode_first_stage(x)
-        z = self.get_first_stage_encoding(encoder_posterior).detach()
+        encoder_posterior = self.encode_first_stage(x)  # get latents (bs, 4, 64, 64)
+        z = self.get_first_stage_encoding(encoder_posterior).detach()  # multiply by scale factor (generally 1.0)
 
         if self.model.conditioning_key is not None:
             if cond_key is None:
@@ -666,12 +666,13 @@ class LatentDiffusion(DDPM):
             if cond_key != self.first_stage_key:
                 if cond_key in ['caption', 'coordinates_bbox']:
                     xc = batch[cond_key]
-                elif cond_key == 'class_label':
-                    xc = batch
+                elif cond_key == 'class_label':  # conditioned on class label
+                    xc = batch  # batch is a dict with keys 'image' and 'class_label', etc.
                 else:
                     xc = super().get_input(batch, cond_key).to(self.device)
             else:
                 xc = x
+                
             if not self.cond_stage_trainable or force_c_encode:
                 if isinstance(xc, dict) or isinstance(xc, list):
                     # import pudb; pudb.set_trace()
@@ -680,6 +681,7 @@ class LatentDiffusion(DDPM):
                     c = self.get_learned_conditioning(xc.to(self.device))
             else:
                 c = xc
+                
             if bs is not None:
                 c = c[:bs]
 
@@ -688,13 +690,13 @@ class LatentDiffusion(DDPM):
                 ckey = __conditioning_keys__[self.model.conditioning_key]
                 c = {ckey: c, 'pos_x': pos_x, 'pos_y': pos_y}
 
-        else:
+        else:  # unconditional
             c = None
             xc = None
             if self.use_positional_encodings:
                 pos_x, pos_y = self.compute_latent_shifts(batch)
                 c = {'pos_x': pos_x, 'pos_y': pos_y}
-        out = [z, c]
+        out = [z, c]  # latent representation and conditioning information
         if return_first_stage_outputs:
             xrec = self.decode_first_stage(z)
             out.extend([x, xrec])
@@ -860,23 +862,23 @@ class LatentDiffusion(DDPM):
             else:
                 return self.first_stage_model.encode(x)
         else:
-            return self.first_stage_model.encode(x)
+            return self.first_stage_model.encode(x)  # returns latents
 
     def shared_step(self, batch, **kwargs):
-        x, c = self.get_input(batch, self.first_stage_key)
-        loss = self(x, c)
+        x, c = self.get_input(batch, self.first_stage_key)  # returns latent representation and conditioning information
+        loss = self(x, c)  # goes to forward
         return loss
 
     def forward(self, x, c, *args, **kwargs):
-        t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
+        t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()  # random timestep
         if self.model.conditioning_key is not None:
             assert c is not None
             if self.cond_stage_trainable:
-                c = self.get_learned_conditioning(c)
+                c = self.get_learned_conditioning(c)  # get embedded conditioning information
             if self.shorten_cond_schedule:  # TODO: drop this option
                 tc = self.cond_ids[t].to(self.device)
                 c = self.q_sample(x_start=c, t=tc, noise=torch.randn_like(c.float()))
-        return self.p_losses(x, c, t, *args, **kwargs)
+        return self.p_losses(x, c, t, *args, **kwargs)  # latent, conditioning, timestep
 
     def _rescale_annotations(self, bboxes, crop_coordinates):  # TODO: move to dataset
         def rescale_bbox(bbox):
@@ -1010,8 +1012,8 @@ class LatentDiffusion(DDPM):
         return mean_flat(kl_prior) / np.log(2.0)
 
     def p_losses(self, x_start, cond, t, noise=None):
-        noise = default(noise, lambda: torch.randn_like(x_start))
-        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
+        noise = default(noise, lambda: torch.randn_like(x_start))  # sample noise
+        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)  # noising process
         model_output = self.apply_model(x_noisy, t, cond)
 
         loss_dict = {}
