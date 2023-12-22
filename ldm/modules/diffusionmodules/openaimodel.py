@@ -729,7 +729,7 @@ class UNetModel(nn.Module):
 
         h = x.type(self.dtype)
         for module in self.input_blocks:
-            h = module(h, emb, context)
+            h = module(h, emb, context)  # representation, temporal embedding, conditioning
             hs.append(h)
         h = self.middle_block(h, emb, context)
         for module in self.output_blocks:

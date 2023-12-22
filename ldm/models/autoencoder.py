@@ -267,7 +267,7 @@ class VQModelInterface(VQModel):
         self.embed_dim = embed_dim
 
     def encode(self, x):
-        h = self.encoder(x)
+        h = self.encoder(x)  # Encoder model.py
         h = self.quant_conv(h)
         return h
 

@@ -7,6 +7,7 @@ https://github.com/CompVis/taming-transformers
 """
 
 import torch
+from torch import clamp
 import torch.nn as nn
 import numpy as np
 import pytorch_lightning as pl
@@ -83,10 +84,10 @@ class DDPM(pl.LightningModule):
         self.image_size = image_size  # try conv?
         self.channels = channels
         self.use_positional_encodings = use_positional_encodings
-        self.model = DiffusionWrapper(unet_config, conditioning_key)
+        self.model = DiffusionWrapper(unet_config, conditioning_key)  # instantiate unet
         count_params(self.model, verbose=True)
         self.use_ema = use_ema
-        if self.use_ema:
+        if self.use_ema:  # exponential moving average
             self.model_ema = LitEma(self.model)
             print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
 
@@ -458,7 +459,8 @@ class LatentDiffusion(DDPM):
         else:
             self.register_buffer('scale_factor', torch.tensor(scale_factor))
         self.instantiate_first_stage(first_stage_config)  # Autoencoder
-        self.instantiate_cond_stage(cond_stage_config)  # Embedder for conditioning information (ex: ClassEmbedder for class labels, in modules.py)
+        # Embedder for conditioning information (ex: ClassEmbedder or FrozenCLIPEmbedder, in modules.py)
+        self.instantiate_cond_stage(cond_stage_config)
         self.cond_stage_forward = cond_stage_forward
         self.clip_denoised = False
         self.bbox_tokenizer = None  
@@ -555,7 +557,7 @@ class LatentDiffusion(DDPM):
                 if isinstance(c, DiagonalGaussianDistribution):
                     c = c.mode()
             else:
-                c = self.cond_stage_model(c)
+                c = self.cond_stage_model(c)  # get class embedding
         else:
             assert hasattr(self.cond_stage_model, self.cond_stage_forward)
             c = getattr(self.cond_stage_model, self.cond_stage_forward)(c)
@@ -825,7 +827,7 @@ class LatentDiffusion(DDPM):
                 return self.first_stage_model.decode(z)
 
     @torch.no_grad()
-    def encode_first_stage(self, x):
+    def  encode_first_stage(self, x):
         if hasattr(self, "split_input_params"):
             if self.split_input_params["patch_distributed_vq"]:
                 ks = self.split_input_params["ks"]  # eg. (128, 128)
@@ -862,7 +864,7 @@ class LatentDiffusion(DDPM):
             else:
                 return self.first_stage_model.encode(x)
         else:
-            return self.first_stage_model.encode(x)  # returns latents
+            return self.first_stage_model.encode(x)  # returns latents, VQModelInterface autoencoder.py
 
     def shared_step(self, batch, **kwargs):
         x, c = self.get_input(batch, self.first_stage_key)  # returns latent representation and conditioning information
@@ -870,7 +872,7 @@ class LatentDiffusion(DDPM):
         return loss
 
     def forward(self, x, c, *args, **kwargs):
-        t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()  # random timestep
+        t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()  # random timestep of size (bs,) 
         if self.model.conditioning_key is not None:
             assert c is not None
             if self.cond_stage_trainable:
@@ -986,7 +988,7 @@ class LatentDiffusion(DDPM):
             x_recon = fold(o) / normalization
 
         else:
-            x_recon = self.model(x_noisy, t, **cond)
+            x_recon = self.model(x_noisy, t, **cond)  # UNet model
 
         if isinstance(x_recon, tuple) and not return_ids:
             return x_recon[0]
@@ -1026,10 +1028,10 @@ class LatentDiffusion(DDPM):
         else:
             raise NotImplementedError()
 
-        loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
+        loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])  # MSE Loss
         loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
 
-        logvar_t = self.logvar[t].to(self.device)
+        logvar_t = self.logvar[t].to(self.device)  # set to 0
         loss = loss_simple / torch.exp(logvar_t) + logvar_t
         # loss = loss_simple / torch.exp(self.logvar) + self.logvar
         if self.learn_logvar:
@@ -1039,9 +1041,9 @@ class LatentDiffusion(DDPM):
         loss = self.l_simple_weight * loss.mean()
 
         loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
-        loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
+        loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()  # variational lower bound loss
         loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
-        loss += (self.original_elbo_weight * loss_vlb)
+        loss += (self.original_elbo_weight * loss_vlb)  # original_elbo_weight = 0
         loss_dict.update({f'{prefix}/loss': loss})
 
         return loss, loss_dict
@@ -1409,7 +1411,7 @@ class DiffusionWrapper(pl.LightningModule):
             out = self.diffusion_model(xc, t)
         elif self.conditioning_key == 'crossattn':
             cc = torch.cat(c_crossattn, 1)
-            out = self.diffusion_model(x, t, context=cc)
+            out = self.diffusion_model(x, t, context=cc)  # latens, timestep, conditioning
         elif self.conditioning_key == 'hybrid':
             xc = torch.cat([x] + c_concat, dim=1)
             cc = torch.cat(c_crossattn, 1)

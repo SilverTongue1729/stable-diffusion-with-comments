@@ -87,7 +87,7 @@ class DDIMSampler(object):
                 if conditioning.shape[0] != batch_size:
                     print(f"Warning: Got {conditioning.shape[0]} conditionings but batch-size is {batch_size}")
 
-        self.make_schedule(ddim_num_steps=S, ddim_eta=eta, verbose=verbose)
+        self.make_schedule(ddim_num_steps=S, ddim_eta=eta, verbose=verbose)  # make timesteps, calculate alphas, etc.
         # sampling
         C, H, W = shape
         size = (batch_size, C, H, W)
@@ -120,7 +120,7 @@ class DDIMSampler(object):
         device = self.model.betas.device
         b = shape[0]
         if x_T is None:
-            img = torch.randn(shape, device=device)
+            img = torch.randn(shape, device=device)  # initial random noise
         else:
             img = x_T
 
@@ -131,7 +131,7 @@ class DDIMSampler(object):
             timesteps = self.ddim_timesteps[:subset_end]
 
         intermediates = {'x_inter': [img], 'pred_x0': [img]}
-        time_range = reversed(range(0,timesteps)) if ddim_use_original_steps else np.flip(timesteps)
+        time_range = reversed(range(0,timesteps)) if ddim_use_original_steps else np.flip(timesteps) # reverse timesteps
         total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
         print(f"Running DDIM Sampling with {total_steps} timesteps")
 
@@ -139,7 +139,7 @@ class DDIMSampler(object):
 
         for i, step in enumerate(iterator):
             index = total_steps - i - 1
-            ts = torch.full((b,), step, device=device, dtype=torch.long)
+            ts = torch.full((b,), step, device=device, dtype=torch.long)  # timestep
 
             if mask is not None:
                 assert x0 is not None
@@ -152,7 +152,7 @@ class DDIMSampler(object):
                                       corrector_kwargs=corrector_kwargs,
                                       unconditional_guidance_scale=unconditional_guidance_scale,
                                       unconditional_conditioning=unconditional_conditioning)
-            img, pred_x0 = outs
+            img, pred_x0 = outs  # img is x_{t-1}, pred_x0 is x_0
             if callback: callback(i)
             if img_callback: img_callback(pred_x0, i)
 
@@ -172,10 +172,10 @@ class DDIMSampler(object):
             e_t = self.model.apply_model(x, t, c)
         else:
             x_in = torch.cat([x] * 2)
-            t_in = torch.cat([t] * 2)
+            t_in = torch.cat([t] * 2)  # timesteps
             c_in = torch.cat([unconditional_conditioning, c])
             e_t_uncond, e_t = self.model.apply_model(x_in, t_in, c_in).chunk(2)
-            e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+            e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)  # classifier free guidance 
 
         if score_corrector is not None:
             assert self.model.parameterization == "eps"
@@ -201,7 +201,7 @@ class DDIMSampler(object):
         if noise_dropout > 0.:
             noise = torch.nn.functional.dropout(noise, p=noise_dropout)
         x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
-        return x_prev, pred_x0
+        return x_prev, pred_x0  # x_prev is x_{t-1}, pred_x0 is x_0
 
     @torch.no_grad()
     def stochastic_encode(self, x0, t, use_original_steps=False, noise=None):

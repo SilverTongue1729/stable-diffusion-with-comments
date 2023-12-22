@@ -1,0 +1,8 @@
+__pycache__
+.vscode
+
+latent_diffusion.egg-info
+logs
+taming
+imagenette2-160.tgz
+src

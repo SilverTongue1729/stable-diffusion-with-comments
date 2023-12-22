@@ -294,8 +294,8 @@ def main():
                 for n in trange(opt.n_iter, desc="Sampling"):
                     for prompts in tqdm(data, desc="data"):
                         uc = None
-                        if opt.scale != 1.0:
-                            uc = model.get_learned_conditioning(batch_size * [""])
+                        if opt.scale != 1.0: # empty prompt for classifier-free guidance
+                            uc = model.get_learned_conditioning(batch_size * [""]) # shape [bs, 77, 768]
                         if isinstance(prompts, tuple):
                             prompts = list(prompts)
                         c = model.get_learned_conditioning(prompts)
